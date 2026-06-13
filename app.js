@@ -1,4 +1,5 @@
 const STORAGE_KEY = "daily-stock-reconciliation-records";
+const itemMaster = typeof ITEM_MASTER === "undefined" ? [] : ITEM_MASTER;
 
 const fields = {
   date: document.querySelector("#entry-date"),
@@ -9,6 +10,7 @@ const fields = {
 
 const stockBody = document.querySelector("#stock-body");
 const rowTemplate = document.querySelector("#row-template");
+const productOptions = document.querySelector("#product-options");
 const totals = {
   issued: document.querySelector("#total-issued"),
   out: document.querySelector("#total-out"),
@@ -25,7 +27,12 @@ document.querySelector("#save-entry").addEventListener("click", saveEntry);
 document.querySelector("#export-csv").addEventListener("click", exportCsv);
 document.querySelector("#clear-history").addEventListener("click", clearHistory);
 
-stockBody.addEventListener("input", calculate);
+stockBody.addEventListener("input", (event) => {
+  if (event.target.dataset.field === "product") {
+    syncProductSelection(event.target.closest("tr"), event.target.value);
+  }
+  calculate();
+});
 stockBody.addEventListener("focusin", (event) => {
   if (event.target.matches('input[type="number"]') && event.target.value === "0") {
     event.target.value = "";
@@ -67,27 +74,98 @@ init();
 
 function init() {
   fields.date.value = getToday();
-  addRow();
-  addRow();
-  addRow();
-  calculate();
+  populateProductOptions();
+  resetStockRows();
   renderHistory();
 }
 
-function addRow(line = {}) {
+function populateProductOptions() {
+  if (!productOptions) return;
+
+  productOptions.replaceChildren();
+  itemMaster.forEach((item) => {
+    const option = document.createElement("option");
+    option.value = productLabel(item);
+    option.label = item.price ? `${formatNumber(item.price)} | ${item.category}` : item.category;
+    productOptions.appendChild(option);
+  });
+}
+
+function resetStockRows(lines = []) {
+  stockBody.replaceChildren();
+
+  if (itemMaster.length) {
+    const unusedLines = [...lines];
+
+    itemMaster.forEach((item) => {
+      const savedIndex = unusedLines.findIndex((line) => getLineItemCode(line) === item.code);
+      const saved = savedIndex >= 0 ? unusedLines.splice(savedIndex, 1)[0] : {};
+      const rowData = {
+        ...saved,
+        code: item.code,
+        product: productLabel(item),
+        price: hasNumber(saved.price) ? saved.price : item.price,
+      };
+      addRow(rowData, false);
+    });
+
+    unusedLines.forEach((line) => addRow(line, false));
+  } else {
+    addRow({}, false);
+    addRow({}, false);
+    addRow({}, false);
+  }
+
+  calculate();
+}
+
+function addRow(line = {}, shouldCalculate = true) {
   const row = rowTemplate.content.firstElementChild.cloneNode(true);
+  const matchingItem = getItemFromLine(line);
+
+  if (matchingItem) {
+    row.dataset.itemCode = matchingItem.code;
+  }
 
   row.querySelectorAll("input").forEach((input) => {
     const field = input.dataset.field;
+
+    if (field === "product") {
+      input.value = line.product || (matchingItem ? productLabel(matchingItem) : "");
+      return;
+    }
+
+    if (field === "price") {
+      input.value = hasNumber(line.price) ? line.price : matchingItem?.price || 0;
+      return;
+    }
+
     if (Object.prototype.hasOwnProperty.call(line, field)) {
       input.value = line[field];
-    } else if (field === "returnExchange" && Object.prototype.hasOwnProperty.call(line, "return")) {
+      return;
+    }
+
+    if (field === "returnExchange" && Object.prototype.hasOwnProperty.call(line, "return")) {
       input.value = line.return;
     }
   });
 
   stockBody.appendChild(row);
-  calculate();
+  if (shouldCalculate) calculate();
+}
+
+function syncProductSelection(row, value) {
+  const item = findItem(value);
+  const priceInput = row.querySelector('[data-field="price"]');
+
+  if (!item) {
+    row.dataset.itemCode = "";
+    return;
+  }
+
+  row.dataset.itemCode = item.code;
+  row.querySelector('[data-field="product"]').value = productLabel(item);
+  priceInput.value = item.price || 0;
 }
 
 function calculate() {
@@ -160,6 +238,13 @@ function readLines() {
       line[field] = input.type === "number" ? toNumber(input.value) : input.value.trim();
     });
 
+    const item = row.dataset.itemCode ? getItemByCode(row.dataset.itemCode) : findItem(line.product);
+    line.code = item?.code || row.dataset.itemCode || "";
+    line.productName = item?.name || line.product;
+    line.weight = item?.weight || "";
+    line.category = item?.category || "";
+    line.subcategory = item?.subcategory || "";
+
     return { row, line };
   });
 }
@@ -167,7 +252,12 @@ function readLines() {
 function getCleanLines() {
   return readLines()
     .map(({ line }) => ({
+      code: line.code,
       product: line.product || "Untitled product",
+      productName: line.productName,
+      weight: line.weight,
+      category: line.category,
+      subcategory: line.subcategory,
       price: line.price,
       issued: line.issued,
       sales: line.sales,
@@ -182,11 +272,10 @@ function getCleanLines() {
       const hasQuantity =
         line.issued ||
         line.sales ||
-        line.price ||
         line.foc ||
         line.returnExchange ||
         line.unload;
-      return line.product !== "Untitled product" || hasQuantity;
+      return line.product !== "Untitled product" && hasQuantity;
     });
 }
 
@@ -194,7 +283,6 @@ function saveEntry() {
   const lines = getCleanLines();
 
   if (!lines.length) {
-    addRow();
     return;
   }
 
@@ -230,12 +318,8 @@ function loadRecord(recordId) {
   fields.executive.value = record.executive || "";
   fields.route.value = record.route || "";
   fields.warehouse.value = record.warehouse || "";
-  stockBody.replaceChildren();
 
-  record.lines.forEach((line) => addRow(line));
-  if (!record.lines.length) addRow();
-
-  calculate();
+  resetStockRows(record.lines || []);
 }
 
 function deleteRecord(recordId) {
@@ -254,9 +338,7 @@ function resetForm() {
   fields.executive.value = "";
   fields.route.value = "";
   fields.warehouse.value = "";
-  stockBody.replaceChildren();
-  addRow();
-  calculate();
+  resetStockRows();
 }
 
 function renderHistory() {
@@ -327,7 +409,11 @@ function exportCsv() {
     ["Warehouse", fields.warehouse.value.trim()],
     [],
     [
+      "Item Code",
       "Product",
+      "Weight",
+      "Category",
+      "Sub Category",
       "Price",
       "Issued",
       "Sales",
@@ -340,7 +426,11 @@ function exportCsv() {
     ],
   ];
   const lineRows = lines.map((line) => [
-    line.product,
+    line.code,
+    line.productName,
+    line.weight,
+    line.category,
+    line.subcategory,
     line.price,
     line.issued,
     line.sales,
@@ -371,6 +461,44 @@ function exportCsv() {
   URL.revokeObjectURL(url);
 }
 
+function getItemFromLine(line) {
+  if (line.code) return getItemByCode(line.code);
+  if (line.product) return findItem(line.product);
+  return null;
+}
+
+function getLineItemCode(line) {
+  return line.code || findItem(line.product)?.code || "";
+}
+
+function findItem(value) {
+  const normalized = normalize(value);
+  if (!normalized) return null;
+
+  return (
+    itemMaster.find((item) => normalize(productLabel(item)) === normalized) ||
+    itemMaster.find((item) => normalize(item.code) === normalized) ||
+    itemMaster.find((item) => normalize(item.name) === normalized) ||
+    itemMaster.find((item) => normalize(`${item.code} - ${item.name}`) === normalized) ||
+    null
+  );
+}
+
+function getItemByCode(code) {
+  const normalized = normalize(code);
+  return itemMaster.find((item) => normalize(item.code) === normalized) || null;
+}
+
+function productLabel(item) {
+  return `${item.code} - ${item.name}${item.weight ? ` (${item.weight})` : ""}`;
+}
+
+function normalize(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase();
+}
+
 function getRecords() {
   try {
     return JSON.parse(localStorage.getItem(STORAGE_KEY)) || [];
@@ -391,6 +519,10 @@ function toCsvRow(values) {
 function toNumber(value) {
   const number = Number(value);
   return Number.isFinite(number) ? number : 0;
+}
+
+function hasNumber(value) {
+  return value !== "" && value !== null && value !== undefined && Number.isFinite(Number(value));
 }
 
 function formatNumber(value) {

@@ -117,7 +117,7 @@
     <template id="row-template">
       <tr>
         <td>
-          <input class="product-input" type="text" placeholder="SKU / Product" data-field="product" />
+          <input class="product-input" type="text" placeholder="SKU / Product" data-field="product" list="product-options" />
         </td>
         <td><input type="number" min="0" step="0.01" value="0" data-field="price" /></td>
         <td><input type="number" min="0" step="1" value="0" data-field="issued" /></td>
@@ -134,6 +134,8 @@
       </tr>
     </template>
 
+    <datalist id="product-options"></datalist>
+    <script src="item-master.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

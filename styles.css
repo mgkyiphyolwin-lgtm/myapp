@@ -223,7 +223,7 @@ input:focus {
 
 table {
   width: 100%;
-  min-width: 1180px;
+  min-width: 1360px;
   border-collapse: collapse;
 }
 
@@ -253,7 +253,7 @@ td:not(:first-child) input {
 }
 
 .product-input {
-  min-width: 180px;
+  min-width: 300px;
 }
 
 .calculated {
